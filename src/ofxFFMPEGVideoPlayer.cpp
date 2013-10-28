@@ -36,6 +36,7 @@ ofxFFMPEGVideoPlayer::ofxFFMPEGVideoPlayer()
 	m_iDirection = eForward;
 	m_iState = eStopped;
 	m_lFramePosInPreLoadedFile = 0;
+    m_lCueInFrameNumber = -1;
     
 	m_AVData.m_VideoData.m_iWidth = 0;
 	m_AVData.m_VideoData.m_iHeight = 0;
@@ -51,11 +52,12 @@ ofxFFMPEGVideoPlayer::ofxFFMPEGVideoPlayer()
 	m_AVData.m_AudioData.m_lDts = 0;
 	m_AVData.m_AudioData.m_pData = NULL;
     
+    
 }
 
 ofxFFMPEGVideoPlayer::~ofxFFMPEGVideoPlayer()
 {
-    saveWav("/Users/geoff/Desktop/out.wav", wav);
+//    saveWav("/Users/geoff/Desktop/out.wav", wav);
     close();
 }
 
@@ -220,7 +222,7 @@ void ofxFFMPEGVideoPlayer::update()
     
     if(bIsSeekable)
     {
-        bIsSeekable = seekFrame(1000);
+        //bIsSeekable = seekFrame(lTargetFrame);
         isFrameDecoded = decodeFrame();
         if(isFrameDecoded)
         {
@@ -230,8 +232,9 @@ void ofxFFMPEGVideoPlayer::update()
                     m_Mutex.unlock();
                     return;
                 }
-                m_VideoPbo.loadData(m_AVData.m_VideoData.m_pData);
-                m_VideoPbo.updateTexture();
+                m_VideoTex.loadData(m_AVData.m_VideoData.m_pData, getWidth(), getHeight(), GL_RGB);
+                //m_VideoPbo.loadData(m_AVData.m_VideoData.m_pData);
+                //m_VideoPbo.updateTexture();
                 
                 m_bHavePixelsChanged = true;
                 newFrame = true;
@@ -257,7 +260,7 @@ void ofxFFMPEGVideoPlayer::update()
 //        }
 //    }
     
-    m_lCurrentFrameNumber++;// = lTargetFrame;
+    //m_lCurrentFrameNumber++;// = lTargetFrame;
     //m_dCurrentTimeInMs = m_dTargetTimeInMs;
 
     
@@ -313,7 +316,7 @@ bool ofxFFMPEGVideoPlayer::isFrameNew()
 }
 unsigned char * ofxFFMPEGVideoPlayer::getPixels()
 {
-    
+    return m_AVData.m_VideoData.m_pData;
 }
 
 ofTexture * ofxFFMPEGVideoPlayer::getTexture()
@@ -365,13 +368,80 @@ void ofxFFMPEGVideoPlayer::setPosition(float pct)
 
 void ofxFFMPEGVideoPlayer::setFrame(int frame)
 {
-    m_dTargetTimeInMs = ((float)(frame) * 1.0 / m_dFps * 1000.0);
+    
+    seekFrame(frame);
+    //m_dTargetTimeInMs = ((float)(frame) * 1.0 / m_dFps * 1000.0);
+}
+
+double ofxFFMPEGVideoPlayer::getFrameRate()
+{
+    double fps = r2d(m_pFormatContext->streams[m_iVideoStream]->r_frame_rate);
+    
+//#if LIBAVFORMAT_BUILD >= CALC_FFMPEG_VERSION(52, 111, 0)
+//    if (fps < eps_zero)
+//    {
+//        fps = r2d(ic->streams[video_stream]->avg_frame_rate);
+//    }
+//#endif
+    
+    if (fps < EPS)
+    {
+        fps = 1.0 / r2d(m_pFormatContext->streams[m_iVideoStream]->codec->time_base);
+    }
+    
+    return fps;
+}
+
+float ofxFFMPEGVideoPlayer::getDurationSec()
+{
+    double sec = (double)m_pFormatContext->duration / (double)AV_TIME_BASE;
+    
+    if (sec < EPS)
+    {
+        sec = (double)m_pFormatContext->streams[m_iVideoStream]->duration * r2d(m_pFormatContext->streams[m_iVideoStream]->time_base);
+    }
+    
+    if (sec < EPS)
+    {
+        sec = (double)m_pFormatContext->streams[m_iVideoStream]->duration * r2d(m_pFormatContext->streams[m_iVideoStream]->time_base);
+    }
+    
+    return sec;
+
+}
+
+int ofxFFMPEGVideoPlayer::getTotalNumFrames()
+{
+    if (m_pFormatContext == NULL) {
+        return -1;
+    }
+    
+    int64_t nbf = m_pFormatContext->streams[m_iVideoStream]->nb_frames;
+    
+    if (nbf == 0)
+    {
+        nbf = (int64_t)floor(getDurationSec() * getFrameRate() + 0.5);
+    }
+    return nbf;
+
 }
 
 
 /*-------------------------------------------------*/
 /*-------------- FFMPEG Implementation ------------*/
 /*-------------------------------------------------*/
+
+double ofxFFMPEGVideoPlayer::dts_to_sec(int64_t dts)
+{
+    return (double)(dts - m_pFormatContext->streams[m_iVideoStream]->start_time) * r2d(m_pFormatContext->streams[m_iVideoStream]->time_base);
+}
+
+int64_t ofxFFMPEGVideoPlayer::dts_to_frame_number(int64_t dts)
+{
+    double sec = dts_to_sec(dts);
+    return (int64_t)(getFrameRate() * sec + 0.5);
+}
+
 
 bool ofxFFMPEGVideoPlayer::seekFrame(long lFrameNumber)
 {
@@ -386,26 +456,60 @@ bool ofxFFMPEGVideoPlayer::seekFrame(long lFrameNumber)
 //    ts = ffmpeg.seekTo / ffmpeg.pFormatCtx->streams[ffmpeg.audioStream]->time_base.num * ffmpeg.pFormatCtx->streams[ffmpeg.audioStream]->time_base.den * ffmpeg.pFormatCtx->duration / AV_TIME_BASE;
 
 
-        int64_t duration = m_pFormatContext->streams[0]->duration;
-        int64_t ts = av_rescale(duration,lFrameNumber,m_lDurationInFrames);
-        int64_t tol = av_rescale(duration,1,2*m_lDurationInFrames);
-        if ( (lFrameNumber < 0) || (lFrameNumber >= m_lDurationInFrames) ) {
-            return -1;
-        }
-        int result = avformat_seek_file( m_pFormatContext, //format context
-                                        0,//stream id
-                                        0,               //min timestamp
-                                        ts,              //target timestamp
-                                        ts,              //max timestamp
-                                        0); //AVSEEK_FLAG_ANY),//flags
-        if (result < 0)
-            return -1;
-        
-        avcodec_flush_buffers(m_pVideoCodecContext);
-//        if (! readNextFrame(lFrameNumber))
-//            return -1;
+    lFrameNumber = std::min((int64_t)lFrameNumber, (int64_t)getTotalNumFrames());
+    int delta = 16;
     
-        return lFrameNumber;
+    // if we have not grabbed a single frame before first seek, let's read the first frame
+    // and get some valuable information during the process
+    if( m_lCueInFrameNumber < 0 && getTotalNumFrames() > 1 )
+        decodeFrame();
+    
+    for(;;)
+    {
+        int64_t _frame_number_temp = std::max((int64_t)(lFrameNumber - delta), (int64_t)0);
+        double sec = (double)_frame_number_temp / getFrameRate();
+        int64_t time_stamp = m_pFormatContext->streams[m_iVideoStream]->start_time;
+        double  time_base  = r2d(m_pFormatContext->streams[m_iVideoStream]->time_base);
+        time_stamp += (int64_t)(sec / time_base + 0.5);
+        if (getTotalNumFrames() > 1) av_seek_frame(m_pFormatContext, m_iVideoStream, time_stamp, AVSEEK_FLAG_BACKWARD);
+        avcodec_flush_buffers(m_pFormatContext->streams[m_iVideoStream]->codec);
+        if( lFrameNumber > 0 )
+        {
+            decodeFrame();
+            
+            if( lFrameNumber > 1 )
+            {
+                m_lCurrentFrameNumber = dts_to_frame_number(m_AVData.m_VideoData.m_lDts) - m_lCueInFrameNumber;
+                printf("_frame_number = %d, frame_number = %d, delta = %d\n", (int)lFrameNumber, (int)m_lCurrentFrameNumber, delta);
+                
+                if( m_lCurrentFrameNumber < 0 || m_lCurrentFrameNumber > lFrameNumber-1 )
+                {
+                    if( _frame_number_temp == 0 || delta >= INT_MAX/4 )
+                        break;
+                    delta = delta < 16 ? delta*2 : delta*3/2;
+                    continue;
+                }
+                while( m_lCurrentFrameNumber < lFrameNumber-1 )
+                {
+                    if(!decodeFrame())
+                        break;
+                }
+                m_lCurrentFrameNumber++;
+                break;
+            }
+            else
+            {
+                m_lCurrentFrameNumber = 1;
+                break;
+            }
+        }
+        else
+        {
+            m_lCurrentFrameNumber = 0;
+            break;
+        }
+    }
+
 
     
     
@@ -570,10 +674,10 @@ bool ofxFFMPEGVideoPlayer::openAudioStream()
         return false;
     }
     
-    wav.sampleRate = m_AudioOutSampleRate;
-    wav.sampleSize = av_get_bytes_per_sample(m_AudioOutSampleFormat);
-    printf("Bytes Per Sample: %d",  wav.sampleSize);
-    wav.channels = av_get_channel_layout_nb_channels(m_AudioOutChannelLayout);
+//    wav.sampleRate = m_AudioOutSampleRate;
+//    wav.sampleSize = av_get_bytes_per_sample(m_AudioOutSampleFormat);
+//    printf("Bytes Per Sample: %d",  wav.sampleSize);
+//    wav.channels = av_get_channel_layout_nb_channels(m_AudioOutChannelLayout);
     
 	return true;
 }
@@ -674,7 +778,6 @@ bool ofxFFMPEGVideoPlayer::decodeVideoFrame(AVPacket* pAVPacket)
 {
 	int isFrameDecoded=0;
     int bytes = 0;
-    m_Mutex.lock();
 
     // Decode video frame
     while(!isFrameDecoded){
@@ -688,6 +791,8 @@ bool ofxFFMPEGVideoPlayer::decodeVideoFrame(AVPacket* pAVPacket)
 	if(!isFrameDecoded)
         return false;
     
+    m_Mutex.lock();
+
     //Convert YUV->RGB
     sws_scale(m_pSwScalingContext, m_pVideoFrame->data, m_pVideoFrame->linesize, 0, getHeight(), m_pVideoFrameRGB->data, m_pVideoFrameRGB->linesize);
     m_AVData.m_VideoData.m_pData =  m_pVideoFrameRGB->data[0];
@@ -698,7 +803,15 @@ bool ofxFFMPEGVideoPlayer::decodeVideoFrame(AVPacket* pAVPacket)
     if(m_AVData.m_VideoData.m_lDts == AV_NOPTS_VALUE)
         m_AVData.m_VideoData.m_lDts = 0;
     
-    printf("video frame %d\n", m_AVData.m_VideoData.m_lPts);
+    printf("video frame %ld\n", m_AVData.m_VideoData.m_lPts);
+    
+    m_lCurrentFrameNumber++;
+    if( m_lCueInFrameNumber < 0 )
+    {
+        printf("First frame %ld\n", dts_to_frame_number(m_AVData.m_VideoData.m_lPts));
+
+        m_lCueInFrameNumber = dts_to_frame_number(m_AVData.m_VideoData.m_lPts);
+    }
     
     m_Mutex.unlock();
         
@@ -789,10 +902,10 @@ bool ofxFFMPEGVideoPlayer::decodeAudioFrame(AVPacket* pAVPacket)
 	printf("audio frame %d\n", m_AVData.m_AudioData.m_lPts);
     printf("audio size %d bytes\n", m_AVData.m_AudioData.m_lSizeInBytes);
     
-    for (int i = 0; i < numSamplesOut * wav.sampleSize * wav.channels; ++i)
-    {
-        wav.data.push_back(m_AVData.m_AudioData.m_pData[i]);
-    }
+//    for (int i = 0; i < numSamplesOut * wav.sampleSize * wav.channels; ++i)
+//    {
+//        wav.data.push_back(m_AVData.m_AudioData.m_pData[i]);
+//    }
     
     m_Mutex.unlock();
     

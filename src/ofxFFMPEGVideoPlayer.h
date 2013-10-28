@@ -120,6 +120,8 @@ public:
 //	virtual float 				getPosition();
 //	virtual float 				getSpeed();
 //	virtual float 				getDuration();
+    float 				getDurationSec();
+
 //	virtual bool				getIsMovieDone();
 //	
 //	virtual void 				setPaused(bool bPause);
@@ -130,7 +132,8 @@ public:
     void				setFrame(int frame);  // frame 0 = first frame...
 //	
 //	virtual int					getCurrentFrame();
-//	virtual int					getTotalNumFrames();
+	int					getTotalNumFrames();
+    double              getFrameRate();
 //	virtual ofLoopType			getLoopState();
 //	
 //	virtual void				firstFrame();
@@ -175,6 +178,9 @@ private:
     void			updateTimer();
     double			getDeltaTime();
     long			calculateFrameNumberFromTime(long lTime);
+    
+    double          dts_to_sec(int64_t dts);
+    int64_t         dts_to_frame_number(int64_t dts);
 
     double			mod(double a, double b);    
     double			r2d(AVRational r);
@@ -202,8 +208,8 @@ private:
     unsigned long			m_lDurationInFrames;			// length in frames of file, or if cueIn and out are set frames between this range
     long					m_lCurrentFrameNumber;		// current framePosition ( if cue positions are set e.g. startCueFrame = 10, currentframe at absolute pos 10 is set to 0 (range between 10 and 500 --> current frame 0 .. 490)
     unsigned long			m_lFramePosInPreLoadedFile;
-    unsigned long			m_lCueInFrameNumber;   // default = 0
-    unsigned long			m_lCueOutFrameNumber;  // default = maxNrOfFrames (end of file)
+    long                    m_lCueInFrameNumber;   // default = 0
+    long                    m_lCueOutFrameNumber;  // default = maxNrOfFrames (end of file)
     int						m_iVideoStream;
     int						m_iAudioStream;
     int						m_iContentType;				// 0 .. video with audio, 1 .. just video, 2 .. just audio, 3 .. image	// 2RealEnumeration
